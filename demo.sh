@@ -20,4 +20,5 @@ $feed_time
 ffmpeg -i $RTMP_INPUT  -ac 1 
 
 
-docker run --gpus all 185958750037.dkr.ecr.ap-northeast-1.amazonaws.com/whisper-streaming-server:latest 
+docker run --gpus all -p 43008:43007 whisper-streaming-server:amazonlinux 
+docker run --gpus all -p 43008:43007 -d 185958750037.dkr.ecr.ap-northeast-1.amazonaws.com/whisper-streaming-server:latest 
