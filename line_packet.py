@@ -44,7 +44,12 @@ def send_one_line(socket, text):
             packet = data[offset:] + b'\0' * padding_length
         else:
             packet = data[offset:offset+PACKET_SIZE]
-        socket.sendall(packet)
+        try:
+            socket.sendall(packet)
+        except ConnectionResetError as e:
+            print(f"Connection reset by peer: {e}")
+        except Exception as e:
+            print(f"An error occurred: {e}")
 
 
 def receive_one_line(socket):

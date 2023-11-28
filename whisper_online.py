@@ -539,6 +539,7 @@ if __name__ == "__main__":
         if o[0] is not None:
             print("%1.4f %1.0f %1.0f %s" % (now*1000, o[0]*1000,o[1]*1000,o[2]),file=sys.stderr,flush=True)
             print("%1.4f %1.0f %1.0f %s" % (now*1000, o[0]*1000,o[1]*1000,o[2]),flush=True)
+            print("Hello")
         else:
             print(o,file=sys.stderr,flush=True)
 

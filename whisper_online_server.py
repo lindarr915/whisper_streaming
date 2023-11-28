@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 from whisper_online import *
 
+import threading
+import json
 import sys
 import argparse
 import os
+
 parser = argparse.ArgumentParser()
 
 # server options
-parser.add_argument("--host", type=str, default='localhost')
+parser.add_argument("--host", type=str, default='0.0.0.0')
 parser.add_argument("--port", type=int, default=43007)
 
 
@@ -18,7 +21,7 @@ parser.add_argument('--min-chunk-size', type=float, default=1.0, help='Minimum a
 parser.add_argument('--model', type=str, default='large-v2', choices="tiny.en,tiny,base.en,base,small.en,small,medium.en,medium,large-v1,large-v2,large".split(","),help="Name size of the Whisper model to use (default: large-v2). The model is automatically downloaded from the model hub if not present in model cache dir.")
 parser.add_argument('--model_cache_dir', type=str, default=None, help="Overriding the default model cache dir where models downloaded from the hub are saved")
 parser.add_argument('--model_dir', type=str, default=None, help="Dir where Whisper model.bin and other files are saved. This option overrides --model and --model_cache_dir parameter.")
-parser.add_argument('--lan', '--language', type=str, default='en', help="Language code for transcription, e.g. en,de,cs.")
+parser.add_argument('--lan', '--language', type=str, default='zh', help="Language code for transcription, e.g. en,de,cs.")
 parser.add_argument('--task', type=str, default='transcribe', choices=["transcribe","translate"],help="Transcribe or translate.")
 parser.add_argument('--backend', type=str, default="faster-whisper", choices=["faster-whisper", "whisper_timestamped"],help='Load only this backend for Whisper processing.')
 parser.add_argument('--vad', action="store_true", default=False, help='Use VAD = voice activity detection, with the default parameters.')
@@ -134,8 +137,8 @@ class ServerProcessor:
         out = []
         while sum(len(x) for x in out) < self.min_chunk*SAMPLING_RATE:
             raw_bytes = self.connection.non_blocking_receive_audio()
-            print(raw_bytes[:10])
-            print(len(raw_bytes))
+            # print(raw_bytes[:10],file=sys.stderr)
+            # print(len(raw_bytes),file=sys.stderr)
             if not raw_bytes:
                 break
             sf = soundfile.SoundFile(io.BytesIO(raw_bytes), channels=1,endian="LITTLE",samplerate=SAMPLING_RATE, subtype="PCM_16",format="RAW")
@@ -144,6 +147,8 @@ class ServerProcessor:
         if not out:
             return None
         return np.concatenate(out)
+
+
 
     def format_output_transcript(self,o):
         # output format in stdout is like:
@@ -163,7 +168,20 @@ class ServerProcessor:
                 beg = max(beg, self.last_end)
 
             self.last_end = end
-            print("%1.0f %1.0f %s" % (beg,end,o[2]),flush=True,file=sys.stderr)
+
+            data = {
+                "StartTime": beg,
+                "EndTime": end,
+                "Transcript": o[2]
+            }
+
+            # Use jsonify to convert the dictionary to a JSON response
+            response = json.dumps(data)
+
+            # print("%s" % response, file=sys.stdout, flush=True)
+
+            print("%1.0f %1.0f %s" % (beg,end,o[2]),flush=True,file=sys.stdout)
+            # return response
             return "%1.0f %1.0f %s" % (beg,end,o[2])
         else:
             print(o,file=sys.stderr,flush=True)
@@ -200,19 +218,26 @@ class ServerProcessor:
 level = logging.INFO
 logging.basicConfig(level=level, format='whisper-server-%(levelname)s: %(message)s')
 
-# server loop
 
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind((args.host, args.port))
-    s.listen(1)
-    logging.info('INFO: Listening on'+str((args.host, args.port)))
-    while True:
-        conn, addr = s.accept()
-        logging.info('INFO: Connected to client on {}'.format(addr))
-        connection = Connection(conn)
-        proc = ServerProcessor(connection, online, min_chunk)
-        proc.process()
-        conn.close()
-        logging.info('INFO: Connection to client closed')
+def tcp_handler():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind((args.host, args.port))
+        s.listen(1)
+        logging.info('INFO: Listening on'+str((args.host, args.port)))
+        while True:
+            conn, addr = s.accept()
+            logging.info('INFO: Connected to client on {}'.format(addr))
+            connection = Connection(conn)
+            proc = ServerProcessor(connection, online, min_chunk)
+            proc.process()
+            conn.close()
+            logging.info('INFO: Connection to client closed')
+
+tcp_thread = threading.Thread(target=tcp_handler)
+tcp_thread.start()
+
+# Wait for both threads to finish
+tcp_thread.join()
+
 logging.info('INFO: Connection closed, terminating.')
