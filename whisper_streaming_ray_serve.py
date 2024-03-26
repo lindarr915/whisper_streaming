@@ -24,22 +24,25 @@ SAMPLING_RATE = 16000
 logger = logging.getLogger("")
 logger.setLevel(logging.DEBUG)
 fastapi_app = FastAPI()
+from ray.serve.handle import DeploymentHandle
 
 from typing import List
 
-@serve.deployment(ray_actor_options={"num_gpus": 1})
+@serve.deployment
 @serve.ingress(fastapi_app)
 class TranscriptionServer:
-    def __init__(self):
+    def __init__(self, asr_handle: DeploymentHandle):
         self.loop = asyncio.get_running_loop()
         self.last_end = None
         self.min_chunk = 1
         self.queue = asyncio.Queue()
 
         tgt_lan = "zh"  # source language
-        self.asr = FasterWhisperASR(tgt_lan, "large-v2")  # loads and wraps Whisper model
+        self.asr_handle = asr_handle
+        
+        # self.asr = FasterWhisperASR(tgt_lan, "large-v2")  # loads and wraps Whisper model
         tokenizer = create_tokenizer(tgt_lan)  # sentence segmenter for the target language
-        self.online_asr_processor = OnlineASRProcessor(self.asr, tokenizer)  # create processing object
+        self.online_asr_processor = OnlineASRProcessor(self.asr_handle, tokenizer)  # create processing object
 
     async def handle_audio(self, websocket: WebSocket) -> None:
         audio_chunk: List[np.ndarray] = []
@@ -141,4 +144,4 @@ class TranscriptionServer:
 #     import uvicorn
 #     uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
     
-app = TranscriptionServer.bind()
+app = TranscriptionServer.bind(FasterWhisperASR.bind())

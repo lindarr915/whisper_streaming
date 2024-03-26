@@ -5,6 +5,9 @@ import librosa
 from functools import lru_cache
 import time
 
+from ray import serve
+from ray.serve.handle import DeploymentHandle
+
 
 
 @lru_cache
@@ -26,7 +29,7 @@ class ASRBase:
     # join transcribe words with this character (" " for whisper_timestamped, "" for faster-whisper because it emits the spaces when neeeded)
     sep = " "
 
-    def __init__(self, lan, modelsize=None, cache_dir=None, model_dir=None):
+    def __init__(self, lan='zh', modelsize='large-v2', cache_dir=None, model_dir=None):
         self.transcribe_kargs = {}
         self.original_language = lan 
 
@@ -79,7 +82,7 @@ class WhisperTimestampedASR(ASRBase):
     def use_vad(self):
         raise NotImplemented("Feature use_vad is not implemented for whisper_timestamped backend.")
 
-
+@serve.deployment(ray_actor_options={"num_gpus": 1})
 class FasterWhisperASR(ASRBase):
     """Uses faster-whisper library as the backend. Works much faster, appx 4-times (in offline mode). For GPU, it requires installation with a specific CUDNN version.
 
@@ -88,6 +91,9 @@ class FasterWhisperASR(ASRBase):
     """
 
     sep = ""
+    
+    def get_sep(self):
+        return self.sep
 
     def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
         from faster_whisper import WhisperModel
@@ -116,7 +122,7 @@ class FasterWhisperASR(ASRBase):
 
     def transcribe(self, audio, init_prompt=""):
         # tested: beam_size=5 is faster and better than 1 (on one 200 second document from En ESIC, min chunk 0.01)
-        segments, info = self.model.transcribe(audio, language=self.original_language, initial_prompt=init_prompt, beam_size=5, word_timestamps=True, condition_on_previous_text=True, **self.transcribe_kargs)
+        segments, info = self.model.transcribe(audio, language=self.original_language, initial_prompt=init_prompt, beam_size=5, word_timestamps=True, condition_on_previous_text=False, **self.transcribe_kargs)
         return list(segments)
 
     def ts_words(self, segments):
@@ -207,7 +213,7 @@ class OnlineASRProcessor:
 
     SAMPLING_RATE = 16000
 
-    def __init__(self, asr, tokenizer):
+    def __init__(self, asr: DeploymentHandle, tokenizer):
         """asr: WhisperASR object
         tokenizer: sentence tokenizer object for the target language. Must have a method *split* that behaves like the one of MosesTokenizer.
         """
@@ -247,7 +253,7 @@ class OnlineASRProcessor:
             l += len(x)+1
             prompt.append(x)
         non_prompt = self.commited[k:]
-        return self.asr.sep.join(prompt[::-1]), self.asr.sep.join(t for _,_,t in non_prompt)
+        return " ".join(prompt[::-1]), "".join(t for _,_,t in non_prompt)
 
     def process_iter(self):
         """Runs on the current audio buffer.
@@ -259,10 +265,10 @@ class OnlineASRProcessor:
         print("PROMPT:", prompt, file=sys.stderr)
         print("CONTEXT:", non_prompt, file=sys.stderr)
         print(f"transcribing {len(self.audio_buffer)/self.SAMPLING_RATE:2.2f} seconds from {self.buffer_time_offset:2.2f}",file=sys.stderr)
-        res = self.asr.transcribe(self.audio_buffer, init_prompt=prompt)
+        res = self.asr.transcribe.remote(self.audio_buffer, init_prompt=prompt)
 
         # transform to [(beg,end,"word1"), ...]
-        tsw = self.asr.ts_words(res)
+        tsw = self.asr.ts_words.remote(res)
 
         self.transcript_buffer.insert(tsw, self.buffer_time_offset)
         o = self.transcript_buffer.flush()
@@ -335,7 +341,7 @@ class OnlineASRProcessor:
     def chunk_completed_segment(self, res):
         if self.commited == []: return
 
-        ends = self.asr.segments_end_ts(res)
+        ends = self.asr.segments_end_ts.remote(res)
 
         t = self.commited[-1][1]
 
@@ -406,7 +412,7 @@ class OnlineASRProcessor:
         # sents: [(beg1, end1, "sentence1"), ...] or [] if empty
         # return: (beg1,end-of-last-sentence,"concatenation of sentences") or (None, None, "") if empty
         if sep is None:
-            sep = self.asr.sep
+            sep = self.asr.get_sep.remote()
         t = sep.join(s[2] for s in sents)
         if len(sents) == 0:
             b = None
