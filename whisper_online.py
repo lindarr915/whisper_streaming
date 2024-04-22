@@ -24,7 +24,7 @@ def load_audio_chunk(fname, beg, end):
 
 
 logger = logging.getLogger("ray.serve")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 
 # Whisper backend
@@ -35,9 +35,9 @@ class ASRBase:
     # join transcribe words with this character (" " for whisper_timestamped, "" for faster-whisper because it emits the spaces when neeeded)
     sep = " "
 
-    def __init__(self, lan="zh", modelsize="large-v3", cache_dir=None, model_dir=None):
+    def __init__(self, lang="zh", modelsize="large-v3", cache_dir=None, model_dir=None):
         self.transcribe_kargs = {}
-        self.original_language = lan
+        self.original_language = lang
 
         self.model = self.load_model(modelsize, cache_dir, model_dir)
 
@@ -54,49 +54,6 @@ class ASRBase:
 # requires imports:
 #      import whisper
 #      import whisper_timestamped
-
-
-class WhisperTimestampedASR(ASRBase):
-    """Uses whisper_timestamped library as the backend. Initially, we tested the code on this backend. It worked, but slower than faster-whisper.
-    On the other hand, the installation for GPU could be easier.
-
-    If used, requires imports:
-        import whisper
-        import whisper_timestamped
-    """
-
-    def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
-        if model_dir is not None:
-            logger.debug(f"ignoring model_dir, not implemented")
-        return whisper.load_model(modelsize, download_root=cache_dir)
-
-    def transcribe(self, audio, init_prompt=""):
-        result = whisper_timestamped.transcribe_timestamped(
-            self.model,
-            audio,
-            language=self.original_language,
-            initial_prompt=init_prompt,
-            verbose=None,
-            condition_on_previous_text=True,
-        )
-        return result
-
-    def ts_words(self, r):
-        # return: transcribe result object to [(beg,end,"word1"), ...]
-        o = []
-        for s in r["segments"]:
-            for w in s["words"]:
-                t = (w["start"], w["end"], w["text"])
-                o.append(t)
-        return o
-
-    def segments_end_ts(self, res):
-        return [s["end"] for s in res["segments"]]
-
-    def use_vad(self):
-        raise NotImplemented(
-            "Feature use_vad is not implemented for whisper_timestamped backend."
-        )
 
 
 # @serve.deployment(ray_actor_options={"num_gpus": 1})
@@ -240,6 +197,7 @@ class OnlineASRProcessor:
         """
         self.asr = asr_handle
         self.tokenizer = tokenizer
+        self.processing = False
 
         self.init()
 
@@ -291,6 +249,7 @@ class OnlineASRProcessor:
         Returns: a tuple (beg_timestamp, end_timestamp, "text"), or (None, None, "").
         The non-emty text is confirmed (commited) partial transcript.
         """
+        
 
         prompt, non_prompt = self.prompt()
         logger.debug(f"PROMPT: {prompt}")
@@ -298,7 +257,16 @@ class OnlineASRProcessor:
         logger.info(
             f"transcribing {len(self.audio_buffer)/self.SAMPLING_RATE:2.2f} seconds from {self.buffer_time_offset:2.2f}"
         )
+        
+        if self.processing:
+            logger.warning(
+                "Processing is already in progress. Skipping this iteration."
+            )
+            return None
+        
+        self.processing = True
         res = await self.asr.transcribe.remote(self.audio_buffer, init_prompt=prompt)
+
 
         # transform to [(beg,end,"word1"), ...]
         tsw = self.ts_words(res)
@@ -337,7 +305,7 @@ class OnlineASRProcessor:
         # self.silence_iters = 0
 
         # if the audio buffer is longer than 30s, trim it...
-        if len(self.audio_buffer) / self.SAMPLING_RATE > 30:
+        if len(self.audio_buffer) / self.SAMPLING_RATE > 10:
             # ...on the last completed segment (labeled by Whisper)
             self.chunk_completed_segment(res)
 
@@ -354,6 +322,8 @@ class OnlineASRProcessor:
         logger.info(
             f"len of buffer now: {len(self.audio_buffer)/self.SAMPLING_RATE:2.2f}"
         )
+        self.processing = False
+        
         return self.to_flush(o)
 
     def chunk_completed_sentence(self):
