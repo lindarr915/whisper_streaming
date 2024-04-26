@@ -338,9 +338,9 @@ class OnlineASRProcessor:
         sents = self.words_to_sentences(self.commited)
         for s in sents:
             logger.debug(f"\tSent: {s}")
-        if len(sents) < 1:
+        if len(sents) < 2:
             return
-        while len(sents) >= 1:
+        while len(sents) >= 2:
             sents.pop(0)
         # we will continue with audio processing at this timestamp
         chunk_at = sents[-1][1]
