@@ -13,6 +13,9 @@ import uuid
 from ray import serve
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
+import boto3
+
+
 
 SAMPLING_RATE = 16000
 
@@ -31,8 +34,9 @@ class TranscriptionServer:
         self.skip_count = 0
 
         self.connected_clients = {}
-
         self.asr_handle = asr_handle
+        self.translate = boto3.client(service_name='translate', region_name='ap-northeast-1')
+        
 
     async def handle_audio(self, client, websocket: WebSocket) -> None:
         audio: List[np.ndarray] = []
@@ -97,6 +101,16 @@ class TranscriptionServer:
                     "EndTime": end, 
                     "Transcript": tuple[2]
             }
+            
+            # start_time = time.time()s
+            # result =  self.translate.translate_text(Text=tuple[2], SourceLanguageCode="zh", TargetLanguageCode="en")
+            # duration = time.time() - start_time
+            # logger.info(f"Translate duration: {duration}")
+            
+            # data = {"StartTime": beg, 
+            #         "EndTime": end, 
+            #         "Transcript": result.get('TranslatedText')
+            # }
 
             # Use jsonify to convert the dictionary to a JSON response
             response = json.dumps(data)
@@ -108,15 +122,15 @@ class TranscriptionServer:
             return None
 
     @fastapi_app.websocket("/")
-    async def handle_request(self, websocket: WebSocket, lang: str = "en") -> None:
+    async def handle_request(self, websocket: WebSocket, lang: str = "zh", dest_lang: str = "zh") -> None:
         tgt_lan = lang  # source language
+        dst_lan = dest_lang
 
         await websocket.accept()
         client_id = str(uuid.uuid4())
         client = OnlineASRProcessor(
-            self.asr_handle, create_tokenizer(tgt_lan)
+            self.asr_handle, create_tokenizer(tgt_lan), lang
         )  # create processing object
-        client.original_language = lang
         self.connected_clients[client_id] = client
 
         logger.info(f"Client {client_id} connected")

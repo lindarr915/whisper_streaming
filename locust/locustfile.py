@@ -28,7 +28,7 @@ class WebSocketUser(User):
 
 
 class WhisperWebSocketUser(WebSocketUser):
-    host = "ws://localhost:8000"
+    host = "ws://localhost:8000?lang=en"
     # wait_time = between(0.5, 1.5)
 
     def on_start(self):
@@ -44,7 +44,7 @@ class WhisperWebSocketUser(WebSocketUser):
                         transcription = json.loads(transcription_str)
                         logging.info(
                             # f"Received transcription: {transcription['text']}, processing time: {transcription['processing_time']}")
-                            f"Received transcription: {transcription_str}")
+                            f"Received transcription: {transcription['Transcript']}")
         self.pool.spawn(_receive)
 
     @task
@@ -52,7 +52,10 @@ class WhisperWebSocketUser(WebSocketUser):
 
         # audio_file = "./data/eng_speech.wav"
         
-        audio_file = "/home/ubuntu/CIO_Forum_GenAI.wav"
+        # audio_file = "/home/ubuntu/CIO_Forum_GenAI.wav"
+        audio_file = "/home/ubuntu/sample_video.wav"
+        # audio_file = "/home/ubuntu/output.wav"
+
         # audio_file = "./data/CIO_Forum_Joey.mp3"
 
         with open(audio_file, 'rb') as file:

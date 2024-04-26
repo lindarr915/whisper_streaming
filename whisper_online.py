@@ -25,6 +25,8 @@ def load_audio_chunk(fname, beg, end):
     return audio[beg_s:end_s]
 
 
+logging.getLogger("faster_whisper").setLevel(logging.DEBUG)
+
 logger = logging.getLogger("ray.serve")
 logger.setLevel(logging.DEBUG)
 # logger.setLevel(logging.WARNING)
@@ -36,10 +38,9 @@ class ASRBase:
     # join transcribe words with this character (" " for whisper_timestamped, "" for faster-whisper because it emits the spaces when neeeded)
     sep = " "
 
-    def __init__(self, lang="en", modelsize="large-v3", cache_dir=None, model_dir=None):
+    def __init__(self, lang="zh", modelsize="large-v3", cache_dir=None, model_dir=None):
         self.transcribe_kargs = {}
         self.original_language = lang
-
         self.model = self.load_model(modelsize, cache_dir, model_dir)
 
     def load_model(self, modelsize, cache_dir):
@@ -50,6 +51,9 @@ class ASRBase:
 
     def use_vad(self):
         raise NotImplemented("must be implemented in the child class")
+    
+    def set_language(self, lang):
+        self.original_lang = lang
 
 
 # @serve.deployment(ray_actor_options={"num_gpus": 1})
@@ -97,13 +101,13 @@ class FasterWhisperASR(ASRBase):
         )
         return model
 
-    def transcribe(self, audio, init_prompt=""):
+    def transcribe(self, audio, init_prompt="", lang="zh"):
         # tested: beam_size=5 is faster and better than 1 (on one 200 second document from En ESIC, min chunk 0.01)
 
         logger.info(f"init prompt is: {init_prompt}")
         segments, info = self.model.transcribe(
             audio,
-            language=self.original_language,
+            language=lang,
             initial_prompt=init_prompt,
             beam_size=5,
             word_timestamps=True,
@@ -133,8 +137,8 @@ class HypothesisBuffer:
         # compare self.commited_in_buffer and new. It inserts only the words in new that extend the commited_in_buffer, it means they are roughly behind last_commited_time and new in content
         # the new tail is added to self.new
 
-        new = [(a + offset, b + offset, t) for a, b, t in new]
-        self.new = [(a, b, t) for a, b, t in new if a > self.last_commited_time - 0.1]
+        new = [(start_time + offset, end_time + offset, t) for start_time, end_time, t in new]
+        self.new = [(start_time, end_time, t) for start_time, end_time, t in new if start_time > self.last_commited_time - 0.1]
 
         # TODO: The following code needs to be refactored
         if len(self.new) >= 1:
@@ -163,15 +167,15 @@ class HypothesisBuffer:
 
         commit = []
         while self.new:
-            na, nb, nt = self.new[0]
+            start_time, end_time, transcription = self.new[0]
 
             if len(self.buffer) == 0:
                 break
 
-            if nt == self.buffer[0][2]:
-                commit.append((na, nb, nt))
-                self.last_commited_word = nt
-                self.last_commited_time = nb
+            if transcription == self.buffer[0][2]:
+                commit.append((start_time, end_time, transcription))
+                self.last_commited_word = transcription
+                self.last_commited_time = end_time
                 self.buffer.pop(0)
                 self.new.pop(0)
             else:
@@ -193,13 +197,14 @@ class OnlineASRProcessor:
 
     SAMPLING_RATE = 16000
 
-    def __init__(self, asr_handle: DeploymentHandle, tokenizer):
+    def __init__(self, asr_handle: DeploymentHandle, tokenizer, original_lang):
         """asr: WhisperASR object
         tokenizer: sentence tokenizer object for the target language. Must have a method *split* that behaves like the one of MosesTokenizer.
         """
         self.asr = asr_handle
         self.tokenizer = tokenizer
         self.processing = False
+        self.original_lang = original_lang
 
         self.init()
 
@@ -230,7 +235,7 @@ class OnlineASRProcessor:
         p = [t for _, _, t in p]
         prompt = []
         l = 0
-        while p and l < 200:  # 200 characters prompt size
+        while p and l <= 100:  # 200 characters prompt size
             x = p.pop(-1)
             l += len(x) + 1
             prompt.append(x)
@@ -267,7 +272,7 @@ class OnlineASRProcessor:
             return None
 
         self.processing = True
-        res = await self.asr.transcribe.remote(self.audio_buffer, init_prompt=prompt)
+        res = await self.asr.transcribe.remote(self.audio_buffer, init_prompt=prompt, lang=self.original_lang)
 
         # transform to [(beg,end,"word1"), ...]
         tsw = self.ts_words(res)
@@ -305,7 +310,7 @@ class OnlineASRProcessor:
         # self.silence_iters = 0
 
         # if the audio buffer is longer than 30s, trim it...
-        if len(self.audio_buffer) / self.SAMPLING_RATE > 10:
+        if len(self.audio_buffer) / self.SAMPLING_RATE >= 6:
             # ...on the last completed segment (labeled by Whisper)
             self.chunk_completed_segment(res)
 
@@ -329,16 +334,16 @@ class OnlineASRProcessor:
     def chunk_completed_sentence(self):
         if self.commited == []:
             return
-        logger.debug(f"{self.commited}")
+        # logger.debug(f"{self.commited}")
         sents = self.words_to_sentences(self.commited)
         for s in sents:
             logger.debug(f"\tSent: {s}")
-        if len(sents) < 2:
+        if len(sents) < 1:
             return
-        while len(sents) > 2:
+        while len(sents) >= 1:
             sents.pop(0)
         # we will continue with audio processing at this timestamp
-        chunk_at = sents[-2][1]
+        chunk_at = sents[-1][1]
 
         logger.debug(f"--- sentence chunked at {chunk_at:2.2f}")
         self.chunk_at(chunk_at)
@@ -351,12 +356,12 @@ class OnlineASRProcessor:
 
         t = self.commited[-1][1]
 
-        if len(ends) > 1:
+        if len(ends) >= 1:
 
-            e = ends[-2] + self.buffer_time_offset
+            e = ends[-1] + self.buffer_time_offset
             while len(ends) > 2 and e > t:
                 ends.pop(-1)
-                e = ends[-2] + self.buffer_time_offset
+                e = ends[-1] + self.buffer_time_offset
             if e <= t:
                 logger.debug(f"--- segment chunked at {e:2.2f}")
                 self.chunk_at(e)
@@ -443,14 +448,6 @@ def create_tokenizer(lan):
         lan in WHISPER_LANG_CODES
     ), "language must be Whisper's supported lang code: " + " ".join(WHISPER_LANG_CODES)
 
-    if lan == "uk":
-        import tokenize_uk
-
-        class UkrainianTokenizer:
-            def split(self, text):
-                return tokenize_uk.tokenize_sents(text)
-
-        return UkrainianTokenizer()
 
     # supported by fast-mosestokenizer
     if (
@@ -459,7 +456,7 @@ def create_tokenizer(lan):
     ):
         from mosestokenizer import MosesTokenizer
 
-        return MosesTokenizer(lan)
+        return MosesTokenizer('en')
 
     # the following languages are in Whisper, but not in wtpsplit:
     if (
