@@ -20,7 +20,7 @@ spec:
               value: http://prometheus-grafana.prometheus-system.svc:80
             - name: RAY_PROMETHEUS_HOST
               value: http://prometheus-kube-prometheus-prometheus.prometheus-system.svc:9090
-            image: 464616699298.dkr.ecr.ap-northeast-1.amazonaws.com/streaming-asr
+            image: 464616699298.dkr.ecr.ap-northeast-1.amazonaws.com/streaming-asr:latest
             name: ray-head
             ports:
             - containerPort: 6379
@@ -58,11 +58,11 @@ spec:
       maxReplicas: 20
       minReplicas: 1
       rayStartParams: {}
-      replicas: 2
+      replicas: 1
       template:
         spec:
           containers:
-          - image: 464616699298.dkr.ecr.ap-northeast-1.amazonaws.com/streaming-asr
+          - image: 464616699298.dkr.ecr.ap-northeast-1.amazonaws.com/streaming-asr:latest
             name: ray-worker
             resources:
               limits:
@@ -83,12 +83,7 @@ spec:
       - name: streaming_asr
         import_path: whisper_streaming_ray_serve:app
         runtime_env:
-          working_dir: "https://github.com/lindarr915/whisper_streaming/archive/d0aba913b94d06ced645dd82b2ac230805313311.zip"
-          pip: 
-            - nvidia-cuda-runtime-cu12
-            - nvidia-cublas-cu12
-            - ctranslate2
-            - faster-whisper
+          working_dir: "https://github.com/lindarr915/whisper_streaming/archive/c681deb0612037ec2ae362b5a1a94817ccd6f05c.zip"
         deployments:
         - name: TranscriptionServer
           max_ongoing_requests: 10
@@ -103,5 +98,5 @@ spec:
             target_ongoing_requests: 2
             min_replicas: 1
             max_replicas: 20
-            initial_replicas: 3
+            initial_replicas: 1
   serviceUnhealthySecondThreshold: 900
