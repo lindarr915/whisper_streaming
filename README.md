@@ -1,3 +1,19 @@
+# How to run this application 
+
+1. Start an GPU instance with Ubuntu 20 Deep Learning AMI (https://aws.amazon.com/releasenotes/aws-deep-learning-base-gpu-ami-ubuntu-22-04/)
+
+```
+git clone https://github.com/lindarr915/whisper_streaming/tree/rayserve
+git checkout rayserve
+
+# install conda the way you prefer
+
+conda create -n myenv python=3.11
+pip install ray[serve]
+pip install -r requirements.txt
+serve run whisper_streaming_ray_serve:app
+```
+
 # whisper_streaming
 Whisper realtime streaming for long speech-to-text transcription and translation
 

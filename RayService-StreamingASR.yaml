@@ -52,11 +52,11 @@ spec:
           volumes:
           - emptyDir: {}
             name: ray-logs
-    rayVersion: '2.11'
+    rayVersion: '2.22'
     workerGroupSpecs:
     - groupName: gpu-group
       maxReplicas: 20
-      minReplicas: 3
+      minReplicas: 1
       rayStartParams: {}
       template:
         spec:
