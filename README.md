@@ -14,6 +14,8 @@ pip install -r requirements.txt
 serve run whisper_streaming_ray_serve:app
 ```
 
+Then you can refer to `nodejs_client/demo.sh` to stream audio bytes to the WebSocket  
+
 # whisper_streaming
 Whisper realtime streaming for long speech-to-text transcription and translation
 
